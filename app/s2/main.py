@@ -1,19 +1,33 @@
+
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-from app.s2.database import Base,engine
+from app.s2.database import Base, engine
 from app.s2.models.parking import ParkingSpot
-
 from app.s2.routes.parking import router as parkingrouter
 
-Base.metadata.create_all(bind=engine)
 
-print("Database tables created.")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-app = FastAPI()
+    print("Database tables created.")
+
+    yield
+
+    await engine.dispose()
 
 
-app.include_router(parkingrouter,prefix="/s2")
+app = FastAPI(lifespan=lifespan)
+
+app.include_router(parkingrouter, prefix="/s2")
+
 
 @app.get("/")
-def root():
-    return {"service": "S2", "message": "Database service is running"}
+async def root():
+    return {
+        "service": "S2",
+        "message": "Database service is running"
+    }

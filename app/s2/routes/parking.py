@@ -1,51 +1,67 @@
-from fastapi import APIRouter,Depends,HTTPException
-from sqlalchemy.orm import Session
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
 from app.s2.database import get_db
 from app.s2.models.parking import ParkingSpot
-from app.s2.schemas.parking import ParkingSpotCreate,ParkingSpotUpdate,ParkingSpotResponse
+from app.s2.schemas.parking import (
+    ParkingSpotCreate,
+    ParkingSpotUpdate,
+    ParkingSpotResponse,
+)
 
 router = APIRouter()
+
 
 @router.post(
     "/parking/spots",
     response_model=ParkingSpotResponse
-    )
-def create_parking_spot(
-    spot:ParkingSpotCreate,
-    db:Session= Depends(get_db)
+)
+async def create_parking_spot(
+    spot: ParkingSpotCreate,
+    db: AsyncSession = Depends(get_db)
 ):
     new_spot = ParkingSpot(
         spot_number=spot.spot_number
     )
+
     db.add(new_spot)
-    db.commit()
-    db.refresh(new_spot)
+    await db.commit()
+    await db.refresh(new_spot)
+
     return new_spot
+
 
 @router.get(
     "/parking/spots/available",
     response_model=list[ParkingSpotResponse]
 )
-def get_available_parking_spots(
-    db: Session = Depends(get_db)
+async def get_available_parking_spots(
+    db: AsyncSession = Depends(get_db)
 ):
-    spots = (
-        db.query(ParkingSpot)
-        .filter(ParkingSpot.occupied == False)
-        .all()
+    statement = select(ParkingSpot).where(
+        ParkingSpot.occupied.is_(False)
     )
 
+    result = await db.execute(statement)
+    spots = result.scalars().all()
+
     return spots
+
 
 @router.get(
     "/parking/spots",
     response_model=list[ParkingSpotResponse]
 )
-def get_all_parking_spots(
-    db: Session = Depends(get_db)
+async def get_all_parking_spots(
+    db: AsyncSession = Depends(get_db)
 ):
-    spots = db.query(ParkingSpot).all()
+    statement = select(ParkingSpot)
+
+    result = await db.execute(statement)
+    spots = result.scalars().all()
 
     return spots
 
@@ -54,15 +70,16 @@ def get_all_parking_spots(
     "/parking/spots/{spot_id}",
     response_model=ParkingSpotResponse
 )
-def get_parking_spot(
+async def get_parking_spot(
     spot_id: int,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    spot = (
-        db.query(ParkingSpot)
-        .filter(ParkingSpot.id == spot_id)
-        .first()
+    statement = select(ParkingSpot).where(
+        ParkingSpot.id == spot_id
     )
+
+    result = await db.execute(statement)
+    spot = result.scalar_one_or_none()
 
     if spot is None:
         raise HTTPException(
@@ -71,8 +88,6 @@ def get_parking_spot(
         )
 
     return spot
-
-
 
 
 
@@ -80,16 +95,17 @@ def get_parking_spot(
     "/parking/spots/{spot_id}",
     response_model=ParkingSpotResponse
 )
-def update_parking_spot(
+async def update_parking_spot(
     spot_id: int,
     spot_update: ParkingSpotUpdate,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    spot = (
-        db.query(ParkingSpot)
-        .filter(ParkingSpot.id == spot_id)
-        .first()
+    statement = select(ParkingSpot).where(
+        ParkingSpot.id == spot_id
     )
+
+    result = await db.execute(statement)
+    spot = result.scalar_one_or_none()
 
     if spot is None:
         raise HTTPException(
@@ -97,51 +113,54 @@ def update_parking_spot(
             detail="Parking spot not found"
         )
 
-    # Occupied state requires both person and entry time
     if spot_update.occupied:
-        if (
-            spot_update.occupied_by is None
-            or spot_update.entry_time is None
-        ):
+        if spot_update.occupied_by is None:
             raise HTTPException(
                 status_code=400,
-                detail="Occupied spot requires occupied_by and entry_time"
+                detail="An occupied spot requires occupied_by"
             )
 
-        # Don't allow a different person to overwrite an occupied spot
-        if spot.occupied:
-            if spot.occupied_by != spot_update.occupied_by:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Parking spot is already occupied"
-                )
+        # Prevent another person from taking an occupied spot
+        if (
+            spot.occupied
+            and spot.occupied_by != spot_update.occupied_by
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Parking spot is already occupied"
+            )
+
+        # Generate entry time only when the spot becomes occupied
+        if not spot.occupied:
+            spot.entry_time = datetime.now(timezone.utc)
 
         spot.occupied = True
         spot.occupied_by = spot_update.occupied_by
-        spot.entry_time = spot_update.entry_time
 
-    # Empty state always clears person and entry time
     else:
+        # Checkout: clear the current parking session
         spot.occupied = False
         spot.occupied_by = None
         spot.entry_time = None
 
-    db.commit()
-    db.refresh(spot)
+    await db.commit()
+    await db.refresh(spot)
 
     return spot
 
 
+
 @router.delete("/parking/spots/{spot_id}")
-def delete_parking_spot(
+async def delete_parking_spot(
     spot_id: int,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    spot = (
-        db.query(ParkingSpot)
-        .filter(ParkingSpot.id == spot_id)
-        .first()
+    statement = select(ParkingSpot).where(
+        ParkingSpot.id == spot_id
     )
+
+    result = await db.execute(statement)
+    spot = result.scalar_one_or_none()
 
     if spot is None:
         raise HTTPException(
@@ -155,8 +174,8 @@ def delete_parking_spot(
             detail="Cannot delete an occupied parking spot"
         )
 
-    db.delete(spot)
-    db.commit()
+    await db.delete(spot)
+    await db.commit()
 
     return {
         "message": "Parking spot deleted successfully",

@@ -70,13 +70,6 @@ async def get_parking_spots():
     cached_data = await redis_client.get("parking:spots")
 
     if cached_data:
-        elapsed_time = time.perf_counter() - start_time
-
-        print(
-            f"CACHE HIT: returning parking spots from Redis | "
-            f"time={elapsed_time * 1000:.3f} ms"
-        )
-
         return json.loads(cached_data)
 
     print("CACHE MISS: fetching parking spots from S2")
@@ -91,7 +84,7 @@ async def get_parking_spots():
     elapsed_time = time.perf_counter() - start_time
 
     print(
-        f"CACHE SET: parking spots stored in Redis | "
+        f"CACHE SET: parking:spots stored in Redis | "
         f"time={elapsed_time * 1000:.3f} ms"
     )
 
