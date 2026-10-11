@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 
+
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -18,8 +19,16 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL is None:
     raise RuntimeError("DATABASE_URL is not set")
 
+#old
+#engine = create_async_engine(DATABASE_URL)
 
-engine = create_async_engine(DATABASE_URL)
+engine = create_async_engine(
+    DATABASE_URL,
+    #pool_size=50,
+    #max_overflow=50,
+    #pool_timeout=120
+)
+
 
 
 SessionLocal = async_sessionmaker(
@@ -27,6 +36,8 @@ SessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False
 )
+
+
 
 
 class Base(DeclarativeBase):
