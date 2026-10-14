@@ -1,9 +1,7 @@
-import json
-import time
-from app.s1.redis import redis_client
 from fastapi import APIRouter
 
 from app.s1 import s2_client
+from app.s1.redis import cached_fetch, cache_delete
 from app.s1.schemas.parking import (
     ParkingSpotCreate,
     ParkingSpotResponse,
@@ -12,50 +10,17 @@ from app.s1.schemas.parking import (
 
 router = APIRouter()
 
+################################## get available
 @router.get(
     "/parking/spots/available",
     response_model=list[ParkingSpotResponse]
 )
 async def get_available_parking_spots():
-
-    start_time = time.perf_counter()
-
-    cache_key = "parking:available"
-
-    cached_data = await redis_client.get(cache_key)
-
-    if cached_data:
-        elapsed_time = time.perf_counter() - start_time
-
-        print(
-            f"CACHE HIT: parking:available from Redis | "
-            f"time={elapsed_time * 1000:.3f} ms"
-        )
-
-        return json.loads(cached_data)
-
-    print(
-        "CACHE MISS: parking:available "
-        "fetching from S2"
+    return await cached_fetch(
+        "parking:available",
+        lambda: s2_client.get("/parking/spots/available"),
     )
 
-    spots = await s2_client.get(
-        "/parking/spots/available"
-    )
-
-    await redis_client.set(
-        cache_key,
-        json.dumps(spots)
-    )
-
-    elapsed_time = time.perf_counter() - start_time
-
-    print(
-        f"CACHE SET: {cache_key} stored in Redis | "
-        f"time={elapsed_time * 1000:.3f} ms"
-    )
-
-    return spots
 
 ################################## get all
 
@@ -64,78 +29,24 @@ async def get_available_parking_spots():
     response_model=list[ParkingSpotResponse]
 )
 async def get_parking_spots():
-
-    start_time = time.perf_counter()
-
-    cached_data = await redis_client.get("parking:spots")
-
-    if cached_data:
-        return json.loads(cached_data)
-
-    print("CACHE MISS: fetching parking spots from S2")
-
-    spots = await s2_client.get("/parking/spots")
-
-    await redis_client.set(
+    return await cached_fetch(
         "parking:spots",
-        json.dumps(spots)
+        lambda: s2_client.get("/parking/spots"),
     )
 
-    elapsed_time = time.perf_counter() - start_time
 
-    print(
-        f"CACHE SET: parking:spots stored in Redis | "
-        f"time={elapsed_time * 1000:.3f} ms"
-    )
-
-    return spots
-
-################################## get specific 
+################################## get specific
 
 @router.get(
     "/parking/spots/{spot_id}",
     response_model=ParkingSpotResponse
 )
 async def get_parking_spot(spot_id: int):
-
-    start_time = time.perf_counter()
-
-    cache_key = f"parking:spot:{spot_id}"
-
-    cached_data = await redis_client.get(cache_key)
-
-    if cached_data:
-        elapsed_time = time.perf_counter() - start_time
-
-        print(
-            f"CACHE HIT: parking:spot:{spot_id} from Redis | "
-            f"time={elapsed_time * 1000:.3f} ms"
-        )
-
-        return json.loads(cached_data)
-
-    print(
-        f"CACHE MISS: parking:spot:{spot_id} "
-        f"fetching from S2"
+    return await cached_fetch(
+        f"parking:spot:{spot_id}",
+        lambda: s2_client.get(f"/parking/spots/{spot_id}"),
     )
 
-    spot = await s2_client.get(
-        f"/parking/spots/{spot_id}"
-    )
-
-    await redis_client.set(
-        cache_key,
-        json.dumps(spot)
-    )
-
-    elapsed_time = time.perf_counter() - start_time
-
-    print(
-        f"CACHE SET: {cache_key} stored in Redis | "
-        f"time={elapsed_time * 1000:.3f} ms"
-    )
-
-    return spot
 
 ########################### CREATE
 
@@ -151,7 +62,7 @@ async def create_parking_spot(
         spot.model_dump(mode="json")
     )
 
-    await redis_client.delete(
+    await cache_delete(
         "parking:spots",
         "parking:available"
     )
@@ -163,8 +74,8 @@ async def create_parking_spot(
 
     return result
 
-############################## Update spot
 
+############################## Update spot
 
 @router.patch(
     "/parking/spots/{spot_id}",
@@ -179,7 +90,7 @@ async def update_parking_spot(
         spot.model_dump(mode="json")
     )
 
-    await redis_client.delete(
+    await cache_delete(
         "parking:spots",
         "parking:available",
         f"parking:spot:{spot_id}"
@@ -193,6 +104,7 @@ async def update_parking_spot(
 
     return result
 
+
 ########################### delete a spot
 
 @router.delete("/parking/spots/{spot_id}")
@@ -202,7 +114,7 @@ async def delete_parking_spot(spot_id: int):
         f"/parking/spots/{spot_id}"
     )
 
-    await redis_client.delete(
+    await cache_delete(
         "parking:spots",
         "parking:available",
         f"parking:spot:{spot_id}"
